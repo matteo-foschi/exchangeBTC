@@ -23,4 +23,3 @@ The features implemented in this project are:
 - Run ```python manage.py runserver```
 - Open http://127.0.0.1:8000/ in your browser
 
-## _🚀 Contacts_
