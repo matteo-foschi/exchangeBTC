@@ -9,7 +9,6 @@ class Profile(models.Model):
     walletUserBTC = models.FloatField(default=0)
     walletUserValueBTC = models.FloatField(default=0)
     walletUserUSD = models.FloatField(default=0)
-    profit = models.FloatField(default=0)
     def publish(self):
         self.save()
 

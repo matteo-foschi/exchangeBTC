@@ -16,7 +16,6 @@ def customer_profile(sender, instance, created, **kwargs):
             walletUserBTC=BTCEntry,
             walletUserValueBTC=ValueBTC*BTCEntry,
         )
-        print("Profile created!")
 
 post_save.connect(customer_profile, sender = User)
 
@@ -27,6 +26,4 @@ def get_ip_address(sender, user, request, **kwargs):
         ip = user_ip_address.split(',')[0]
     else:
         ip = request.META.get('REMOTE_ADDR')
-    print(ip)
     Profile.objects.filter(user=user).update(ips=ip)
-    print("Profile updated")

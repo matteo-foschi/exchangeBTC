@@ -6,7 +6,7 @@ from django.contrib import messages
 from datetime import datetime
 from django.http import JsonResponse
 from .cmc import CoinMarketCup
-from django.contrib.auth.decorators import login_required
+import pymongo
 from django.contrib.admin.views.decorators import staff_member_required
 
 
@@ -88,16 +88,17 @@ def create_order(request):
 
                 order_price = Order.objects.filter(OrderType='Sell', OrderStatus='Open', price_order__lte=price, quantity__gte=quantity).order_by('-quantity', 'price_order', 'datetime').first()
 
-                print(order_price)
                 #If I found an order that respect the filter i close the new order and the order found
 
                 if order_price is not None:
+                    personalClientMdB = pymongo.MongoClient("mongodb://localhost:27017/")
+                    transactionDocument = personalClientMdB.get_database("exchange-db")
+
                     #Set the sell order closed end and the price equal the buy price
                     order_price.OrderStatus = 'Closed'
                     order_price.price_end_order = price
                     order_price.save()
 
-                    print(order_price)
                     #Set the buy order closed and the price equale the buy price
                     orderCreated.price_end_order = price
                     orderCreated.OrderStatus = 'Closed'
@@ -108,13 +109,25 @@ def create_order(request):
                     object_id = str(object_id)
                     print(object_id)
                     sellCustomer = Profile.objects.get(user=order_price.profile)
-                    print(sellCustomer)
 
                     sellCustomer.walletUserUSD = sellCustomer.walletUserUSD + price
                     sellCustomer.save()
                     Buyer.walletUserBTC = Buyer.walletUserBTC + quantity
 
                     orderMatch = True
+                    profit_order = price - order_price.price_order
+                    transactionList = transactionDocument['Transactions Closed List']
+                    saveTransactionClosed = {
+                        'Buy User': str(Buyer.user),
+                        'Buy Profile': str(Buyer._id),
+                        'Order Type': 'Buy',
+                        'BTC Quantity': quantity,
+                        'Price': price,
+                        'Sell User': str(sellCustomer.user),
+                        'Sell Profile': str(sellCustomer._id),
+                        'Profit Order': profit_order,
+                    }
+                    save_transaction = transactionList.insert_one(saveTransactionClosed)
 
                 else:
                     orderCreated.OrderStatus = 'Open'
@@ -165,10 +178,11 @@ def sell_order(request):
 
                 order_price = Order.objects.filter(OrderType='Buy', OrderStatus='Open', price_order__gte=price, quantity__lte=quantity).order_by('-quantity', 'price_order', 'datetime').first()
 
-                print(order_price)
                 #If I found an order that respect the filter i close the new order and the order found
 
                 if order_price is not None:
+                    personalClientMdB = pymongo.MongoClient("mongodb://localhost:27017/")
+                    transactionDocument = personalClientMdB.get_database("exchange-db")
                     #Set the sell order closed end and the price equal the buy price
                     order_price.OrderStatus = 'Closed'
                     order_price.price_end_order = price
@@ -186,6 +200,21 @@ def sell_order(request):
                     BuyCustomer.save()
                     Seller.walletUserUSD = Seller.walletUserUSD + quantity
                     orderMatch = True
+
+                    profit_order = order_price.price_order - price
+                    transactionList = transactionDocument['Transactions Closed List']
+                    saveTransactionClosed = {
+                        'Sell User': str(Seller.user),
+                        'Sell Profile': str(Seller._id),
+                        'Order Type': 'Sell',
+                        'BTC Quantity': quantity,
+                        'Price': price,
+                        'Buy User': str(BuyCustomer.user),
+                        'Buy Profile': str(BuyCustomer._id),
+                        'Profit Order': profit_order,
+                    }
+                    save_transaction = transactionList.insert_one(saveTransactionClosed)
+
                 else:
                     orderCreated.OrderStatus = 'Open'
                 #I decrease the profile for the buyer
@@ -229,24 +258,19 @@ def profitProfile(request):
     UserPendingSell = 0
     userProfile = Profile.objects.filter()
     for r in userProfile:
+        UserPendingBuy = 0
+        UserPendingSell = 0
         userAmmount = (r.walletUserBTC * data.updated_data()) + r.walletUserUSD
-        print('utente ' + str(r.user))
-        print('BTC in portafoglio ' + str(r.walletUserBTC))
-        print('prezzo BTC: ' + str(data.updated_data()))
-        print('Wallet USD' + str(r.walletUserUSD))
-        print('Totale: ' + str(userAmmount))
+
         orderPendingBuy = Order.objects.filter(profile=r.user, OrderStatus='Open', OrderType='Buy')
         for order in orderPendingBuy:
             UserPendingBuy = UserPendingBuy + order.price_order
 
-        print(UserPendingBuy)
         orderPendingSell = Order.objects.filter(profile=r.user, OrderStatus='Open', OrderType='Sell')
         for order in orderPendingSell:
-            UserPendingSell = UserPendingSell + (order.quantity * data.updated_data())
-        print(UserPendingSell)
-        print(r.walletUserValueBTC)
+            UserPendingSell = UserPendingSell + order.price_order
+
         profit = userAmmount + UserPendingBuy + UserPendingSell - r.walletUserValueBTC
-        print(profit)
         response.append(
             {
                 "profile": str(r._id),
