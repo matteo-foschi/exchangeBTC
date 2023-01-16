@@ -243,11 +243,11 @@ def sellOrder (request):
                         transactionList = transactionDocument['Transactions Closed List']
                         saveTransactionClosed = {
                             'Sell User': str(seller.user),
-                            'Buy Profile': str(seller._id),
+                            'Sell Profile': str(seller._id),
                             'Order Type': 'Buy',
                             'BTC Quantity': quantityTransaction,
-                            'Price Buy': price,
-                            'Sell Order Price': str(orderFinded.priceOrder),
+                            'Price Sell': price,
+                            'Buy Order Price': str(orderFinded.priceOrder),
                             'Buy User': str(buyerCustomer.user),
                             'Buy Profile': str(buyerCustomer._id),
                             'Seller Profit Order': str(orderCreated.profitOrder),
