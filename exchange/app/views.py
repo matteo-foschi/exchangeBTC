@@ -8,12 +8,13 @@ from django.http import JsonResponse
 from .cmc import CoinMarketCup
 import pymongo
 from django.contrib.admin.views.decorators import staff_member_required
-
+from django.db.models import Q
+from decimal import Decimal
 
 def exchangePage(request):
     if request.user.is_authenticated:
         UserDataProfile = Profile.objects.get(user=request.user)
-        context = {'userData':UserDataProfile}
+        context = {'userData': UserDataProfile}
     else:
         context = {}
     return render(request, 'account/exchange.html', context)
@@ -21,7 +22,6 @@ def exchangePage(request):
 
 def registerPage(request):
     form = CreateUserForm()
-
     if request.method == 'POST':
         form = CreateUserForm(request.POST)
         if form.is_valid():
@@ -36,15 +36,10 @@ def registerPage(request):
     return render(request, 'account/register.html', context)
 
 def loginPage(request):
-    # if request.user.is_authenticated:
-        # return redirect('ExchangePage')
-
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
-
         user = authenticate(request, username=username, password=password)
-
         if user is not None:
             login(request, user)
             return redirect('ExchangePage')
@@ -53,199 +48,252 @@ def loginPage(request):
     context = {}
     return render(request, 'account/login.html', context)
 
-
 def logOutUser(request):
     logout(request)
     messages.info(request, "Logged out successfully!")
     return redirect('LoginPage')
 
-
-def create_order(request):
+def buyOrder(request):
     form = OrderForm()
     orderMatch = False
     if request.method == 'POST':
         form = OrderForm(request.POST)
         orderCreated = Order()
+
         if form.is_valid():
-            Buyer = Profile.objects.get(user=request.user)
+            user = request.user
+            buyer = Profile.objects.get(user=request.user)
             price = form.cleaned_data.get('price')
             quantity = form.cleaned_data.get('quantity')
+            totalPriceBuy = price * quantity
             #If the buyer don't have USD in Wallet he can't buy other BTC
-            if Buyer.walletUserUSD < form.cleaned_data.get('price'):
-                messages.info(request, "You USD balance is not enough for Sell order")
+            if buyer.walletUserUSD < totalPriceBuy:
+                messages.info(request, "You USD balance is not enough for buy order.")
                 return redirect('buyOrder')
             else:
+                orderFindMatch = True
                 orderCreated.profile = request.user
-                orderCreated.OrderType = 'Buy'
-                orderCreated.datetime = datetime.now()
+                orderCreated.orderType = 'Buy'
+                orderCreated.dateTime = datetime.now()
+                orderCreated.priceOrder = form.cleaned_data.get('price')
 
-                orderCreated.price_order = form.cleaned_data.get('price')
-                orderCreated.quantity = form.cleaned_data.get('quantity')
+                #While Cylce thath check for all the Sell open orders order by price and date, that match with the order price
+                while orderFindMatch:
+                    orderFinded = Order.objects.filter(~Q(profile=user), orderType='Sell', orderStatus='Open', priceOrder__lte=price).order_by('priceOrder', 'dateTime').first()
 
-                orderCreated.price_end_order = 0
+                    if orderFinded is not None:
+                        orderMatch = True
+                        quantityTransaction = 0
+                        #I check the Profile related to the Sell order found
+                        sellCustomer = Profile.objects.get(user=orderFinded.profile)
 
-                #Filter the first Sell order published by a different Profile, ordered by date, with status Open and with the same quantity and the price in grather or equal than the sell price.
+                        if quantity >= orderFinded.quantity:
+                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            buyer.walletUserBTC = buyer.walletUserBTC + orderFinded.quantity
+                            sellCustomer.walletUserUSD = sellCustomer.walletUserUSD + (price*orderFinded.quantity)
+                            sellCustomer.save()
+                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            buyer.walletUserUSD = buyer.walletUserUSD - (price * orderFinded.quantity)
+                            #The new quantity for this Buy order will be decreased by the quantity of the sell order closed
+                            quantityTransaction = orderFinded.quantity
+                            quantity = quantity - orderFinded.quantity
+                            #Calculation of the profit for Sell order
+                            orderFinded.profitOrder = (price - orderFinded.priceOrder)*orderFinded.quantity
+                            #The quantity of Sell order was used in total, then put the quantity for the order to 0
+                            orderFinded.quantity = 0
+                            orderFinded.save()
+                        else:
+                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            buyer.walletUserBTC = buyer.walletUserBTC + quantity
+                            sellCustomer.walletUserUSD = sellCustomer.walletUserUSD + (price * quantity)
+                            sellCustomer.save()
+                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            buyer.walletUserUSD = buyer.walletUserUSD - (price * quantity)
+                            #Calculation of the profit for Sell order
+                            orderFinded.profitOrder = (price - orderFinded.priceOrder) * orderFinded.quantity
+                            x = Decimal(orderFinded.quantity) - Decimal(quantity)
+                            y = float(x)
+                            #The buy quantity is less then the Sell quantity, then I can't close the Sell order and reduce the Sell quantity by Buy quantity
+                            orderFinded.quantity = y
+                            orderFinded.save()
+                            quantityTransaction = quantity
+                            quantity = 0
+                        #If sell order fined have quantity equal to 0, close the Sell order
+                        if orderFinded.quantity == 0:
+                            orderFinded.orderStatus = 'Closed'
+                            orderFinded.save()
 
-                order_price = Order.objects.filter(OrderType='Sell', OrderStatus='Open', price_order__lte=price, quantity__gte=quantity).order_by('-quantity', 'price_order', 'datetime').first()
+                        #Save the transaction in a transaction list database
+                        personalClientMdb = pymongo.MongoClient("mongodb://localhost:27017/")
+                        transactionDocument = personalClientMdb.get_database("exchange-db")
+                        transactionList = transactionDocument['Transactions Closed List']
+                        saveTransactionClosed = {
+                            'Buy User': str(buyer.user),
+                            'Buy Profile': str(buyer._id),
+                            'Order Type': 'Buy',
+                            'BTC Quantity': quantityTransaction,
+                            'Price Buy': price,
+                            'Sell Order Price': str(orderFinded.priceOrder),
+                            'Sell User': str(sellCustomer.user),
+                            'Sell Profile': str(sellCustomer._id),
+                            'Seller Profit Order': str(orderFinded.profitOrder),
+                        }
+                        save_transaction = transactionList.insert_one(saveTransactionClosed)
 
-                #If I found an order that respect the filter i close the new order and the order found
+                    else:
+                        #If there are no order match the Buy order is in Open status for the remain quantity
+                        orderCreated.orderStatus = 'Open'
+                        buyer.walletUserUSD = buyer.walletUserUSD - (price * quantity)
+                        if quantity == 0:
+                            orderCreated.orderStatus = 'Closed'
+                        orderFindMatch = False
+                    if quantity == 0:
+                        orderCreated.orderStatus = 'Closed'
+                        orderFindMatch = False
 
-                if order_price is not None:
-                    personalClientMdB = pymongo.MongoClient("mongodb://localhost:27017/")
-                    transactionDocument = personalClientMdB.get_database("exchange-db")
+                #Save buy profile  after all the controls
+                buyer.save()
+                #Save the Buy order created
+                orderCreated.quantity = quantity
+                orderCreated.createOrder()
 
-                    #Set the sell order closed end and the price equal the buy price
-                    order_price.OrderStatus = 'Closed'
-                    order_price.price_end_order = price
-                    order_price.save()
-
-                    #Set the buy order closed and the price equale the buy price
-                    orderCreated.price_end_order = price
-                    orderCreated.OrderStatus = 'Closed'
-                    print(order_price.profile)
-                    #I increase the profile for the costumer of the Sell order
-                    #object_id = ObjectId('63b447c1292b464c9780a09c')
-                    object_id = order_price.profile
-                    object_id = str(object_id)
-                    print(object_id)
-                    sellCustomer = Profile.objects.get(user=order_price.profile)
-
-                    sellCustomer.walletUserUSD = sellCustomer.walletUserUSD + price
-                    sellCustomer.save()
-                    Buyer.walletUserBTC = Buyer.walletUserBTC + quantity
-
-                    orderMatch = True
-                    profit_order = price - order_price.price_order
-                    transactionList = transactionDocument['Transactions Closed List']
-                    saveTransactionClosed = {
-                        'Buy User': str(Buyer.user),
-                        'Buy Profile': str(Buyer._id),
-                        'Order Type': 'Buy',
-                        'BTC Quantity': quantity,
-                        'Price': price,
-                        'Sell User': str(sellCustomer.user),
-                        'Sell Profile': str(sellCustomer._id),
-                        'Profit Order': profit_order,
-                    }
-                    save_transaction = transactionList.insert_one(saveTransactionClosed)
-
-                else:
-                    orderCreated.OrderStatus = 'Open'
-                #I decrease the profile for the buyer
-
-                Buyer.walletUserUSD = Buyer.walletUserUSD - price
-                Buyer.save()
-
-                orderCreated.CreateOrder()
                 if orderMatch is True:
-                    messages.success(request, 'Buy order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD and sucessfully selled' )
+                    messages.success(request, 'Buy order correctly published' )
                 else:
-                    messages.success(request, 'Buy order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD')
+                    messages.success(request, 'Buy order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD in waiting open orders list')
                 return redirect('ExchangePage')
         else:
             messages.info(request, "Information in the form is not valid")
-
-
     context = {'form': form}
     return render(request, 'account/buyOrder.html', context)
 
-
-def sell_order(request):
+def sellOrder (request):
     form = OrderForm()
     orderMatch = False
     if request.method == 'POST':
         form = OrderForm(request.POST)
         orderCreated = Order()
+
         if form.is_valid():
-            Seller = Profile.objects.get(user=request.user)
+            user = request.user
+            seller = Profile.objects.get(user=request.user)
             price = form.cleaned_data.get('price')
             quantity = form.cleaned_data.get('quantity')
-            #If the buyer don't have USD in Wallet he can't buy other BTC
-            if Seller.walletUserBTC < form.cleaned_data.get('quantity'):
-                messages.info(request, "You BTC balance is not enough for Buy order")
+            totalPriceSell = price * quantity
+            #If the seller don't have BTC in Wallet he can't buy other BTC
+            if seller.walletUserBTC < quantity:
+                messages.info(request, "You BTC balance is not enough for sell order.")
                 return redirect('sellOrder')
             else:
+                orderFindMatch = True
                 orderCreated.profile = request.user
-                orderCreated.OrderType = 'Sell'
-                orderCreated.datetime = datetime.now()
+                orderCreated.orderType = 'Sell'
+                orderCreated.dateTime = datetime.now()
+                orderCreated.priceOrder = form.cleaned_data.get('price')
 
-                orderCreated.price_order = form.cleaned_data.get('price')
-                orderCreated.quantity = form.cleaned_data.get('quantity')
+                #While Cylce thath check for all the Buy open orders order by price and date, that match with the order price
+                while orderFindMatch:
+                    orderFinded = Order.objects.filter(~Q(profile=user), orderType='Buy', orderStatus='Open', priceOrder__gte=price).order_by('priceOrder', 'dateTime').first()
 
-                orderCreated.price_end_order = 0
+                    if orderFinded is not None:
+                        orderMatch = True
+                        quantityTransaction = 0
+                        #I check the Profile related to the Buy order found
+                        buyerCustomer = Profile.objects.get(user=orderFinded.profile)
 
-                #Filter the first Sell order published by a different Profile, ordered by date, with status Open and with the same quantity and the price in grather or equal than the sell price.
+                        if quantity >= orderFinded.quantity:
+                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            seller.walletUserUSD = seller.walletUserUSD + (orderFinded.quantity*orderFinded.priceOrder)
+                            buyerCustomer.walletUserBTC = buyerCustomer.walletUserBTC + orderFinded.quantity
+                            buyerCustomer.save()
+                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            seller.walletUserBTC = seller.walletUserBTC - orderFinded.quantity
+                            #The new quantity for this Buy order will be decreased by the quantity of the sell order closed
+                            quantityTransaction = orderFinded.quantity
+                            quantity = quantity - orderFinded.quantity
+                            #Calculation of the profit for Sell order
+                            orderCreated.profitOrder = (orderFinded.priceOrder - price)*orderFinded.quantity
+                            #The quantity of Sell order was used in total, then put the quantity for the order to 0
+                            orderFinded.quantity = 0
+                            orderFinded.save()
+                        else:
+                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            seller.walletUserUSD = seller.walletUserUSD + (quantity*orderFinded.priceOrder)
+                            buyerCustomer.walletUserBTC = buyerCustomer.walletUserBTC + quantity
+                            buyerCustomer.save()
+                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            seller.walletUserBTC = seller.walletUserBTC - quantity
+                            #Calculation of the profit for Sell order
+                            orderCreated.profitOrder = (orderFinded.priceOrder - price) * quantity
+                            x = Decimal(orderFinded.quantity) - Decimal(quantity)
+                            y = float(x)
+                            #The buy quantity is less then the Sell quantity, then I can't close the Sell order and reduce the Sell quantity by Buy quantity
+                            orderFinded.quantity = y
+                            orderFinded.save()
+                            quantityTransaction = quantity
+                            quantity = 0
+                        #If sell order fined have quantity equal to 0, close the Sell order
+                        if orderFinded.quantity == 0:
+                            orderFinded.orderStatus = 'Closed'
+                            orderFinded.save()
 
-                order_price = Order.objects.filter(OrderType='Buy', OrderStatus='Open', price_order__gte=price, quantity__lte=quantity).order_by('-quantity', 'price_order', 'datetime').first()
+                        #Save the transaction in a transaction list database
+                        personalClientMdb = pymongo.MongoClient("mongodb://localhost:27017/")
+                        transactionDocument = personalClientMdb.get_database("exchange-db")
+                        transactionList = transactionDocument['Transactions Closed List']
+                        saveTransactionClosed = {
+                            'Sell User': str(seller.user),
+                            'Buy Profile': str(seller._id),
+                            'Order Type': 'Buy',
+                            'BTC Quantity': quantityTransaction,
+                            'Price Buy': price,
+                            'Sell Order Price': str(orderFinded.priceOrder),
+                            'Buy User': str(buyerCustomer.user),
+                            'Buy Profile': str(buyerCustomer._id),
+                            'Seller Profit Order': str(orderCreated.profitOrder),
+                        }
+                        save_transaction = transactionList.insert_one(saveTransactionClosed)
 
-                #If I found an order that respect the filter i close the new order and the order found
+                    else:
+                        #If there are no order match the Buy order is in Open status for the remain quantity
+                        orderCreated.orderStatus = 'Open'
+                        seller.walletUserUSD = seller.walletUserUSD - (price * quantity)
+                        if quantity == 0:
+                            orderCreated.orderStatus = 'Closed'
+                        orderFindMatch = False
+                    if quantity == 0:
+                        orderCreated.orderStatus = 'Closed'
+                        orderFindMatch = False
 
-                if order_price is not None:
-                    personalClientMdB = pymongo.MongoClient("mongodb://localhost:27017/")
-                    transactionDocument = personalClientMdB.get_database("exchange-db")
-                    #Set the sell order closed end and the price equal the buy price
-                    order_price.OrderStatus = 'Closed'
-                    order_price.price_end_order = price
-                    order_price.save()
+                #Save buy profile  after all the controls
+                seller.save()
+                #Save the Buy order created
+                orderCreated.quantity = quantity
+                orderCreated.createOrder()
 
-                    #Set the buy order closed and the price equale the buy price
-                    orderCreated.price_end_order = price
-                    orderCreated.OrderStatus = 'Closed'
-
-                    #I increase the profile for the costumer of the Sell order
-
-                    BuyCustomer = Profile.objects.get(user=order_price.profile)
-
-                    BuyCustomer.walletUserBTC = BuyCustomer.walletUserBTC + quantity
-                    BuyCustomer.save()
-                    Seller.walletUserUSD = Seller.walletUserUSD + quantity
-                    orderMatch = True
-
-                    profit_order = order_price.price_order - price
-                    transactionList = transactionDocument['Transactions Closed List']
-                    saveTransactionClosed = {
-                        'Sell User': str(Seller.user),
-                        'Sell Profile': str(Seller._id),
-                        'Order Type': 'Sell',
-                        'BTC Quantity': quantity,
-                        'Price': price,
-                        'Buy User': str(BuyCustomer.user),
-                        'Buy Profile': str(BuyCustomer._id),
-                        'Profit Order': profit_order,
-                    }
-                    save_transaction = transactionList.insert_one(saveTransactionClosed)
-
-                else:
-                    orderCreated.OrderStatus = 'Open'
-                #I decrease the profile for the buyer
-
-                Seller.walletUserBTC = Seller.walletUserBTC - quantity
-                Seller.save()
-
-                orderCreated.CreateOrder()
                 if orderMatch is True:
-                    messages.success(request, 'Sell order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD and sucessfully buyed' )
+                    messages.success(request, 'Sell order correctly published' )
                 else:
-                    messages.success(request, 'Sell order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD')
+                    messages.success(request, 'Sell order correctly published for: ' + str(quantity) + ' BTC at the price: ' + str(price) + ' USD in waiting open orders list')
                 return redirect('ExchangePage')
         else:
             messages.info(request, "Information in the form is not valid")
     context = {'form': form}
     return render(request, 'account/sellOrder.html', context)
 
-def OpenOrders(request):
+def openOrders(request):
     response = []
-    results = Order.objects.filter(OrderStatus='Open').order_by('datetime')
+    results = Order.objects.filter(orderStatus='Open').order_by('dateTime')
     for r in results:
         response.append(
             {
-                "id_order" : r.id,
-                "profile" : str(r.profile),
-                "OrderType" : r.OrderType,
-                "OrderStatus" : r.OrderStatus,
-                "datetime" : r.datetime,
-                "price_order" : r.price_order,
-                "quantity" : r.quantity,
+                "id_order": r.id,
+                "profile": str(r.profile),
+                "orderType": r.orderType,
+                "orderStatus": r.orderStatus,
+                "dateTime": r.dateTime,
+                "priceOrder": r.priceOrder,
+                "quantity": r.quantity,
             }
         )
     return JsonResponse(response, safe=False, json_dumps_params={'indent': 3})
@@ -254,23 +302,21 @@ def OpenOrders(request):
 def profitProfile(request):
     response = []
     data = CoinMarketCup()
-    UserPendingBuy = 0
-    UserPendingSell = 0
     userProfile = Profile.objects.filter()
     for r in userProfile:
-        UserPendingBuy = 0
-        UserPendingSell = 0
+        userPendingBuy = 0
+        userPendingSell = 0
         userAmmount = (r.walletUserBTC * data.updated_data()) + r.walletUserUSD
 
-        orderPendingBuy = Order.objects.filter(profile=r.user, OrderStatus='Open', OrderType='Buy')
+        orderPendingBuy = Order.objects.filter(profile=r.user, orderStatus='Open', orderType='Buy')
         for order in orderPendingBuy:
-            UserPendingBuy = UserPendingBuy + order.price_order
+            userPendingBuy = userPendingBuy + order.priceOrder
 
-        orderPendingSell = Order.objects.filter(profile=r.user, OrderStatus='Open', OrderType='Sell')
+        orderPendingSell = Order.objects.filter(profile=r.user, orderStatus='Open', orderType='Sell')
         for order in orderPendingSell:
-            UserPendingSell = UserPendingSell + order.price_order
+            userPendingSell = userPendingSell + order.priceOrder
 
-        profit = userAmmount + UserPendingBuy + UserPendingSell - r.walletUserValueBTC
+        profit = userAmmount + userPendingBuy + userPendingSell - r.walletUserValueBTC
         response.append(
             {
                 "profile": str(r._id),

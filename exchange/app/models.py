@@ -1,6 +1,7 @@
 from djongo import models
 from djongo.models.fields import ObjectIdField, Field
 from django.contrib.auth.models import User
+from decimal import Decimal
 
 class Profile(models.Model):
     _id = ObjectIdField()
@@ -17,23 +18,23 @@ class Order(models.Model):
     type = [
         ('Buy', 'Buy'),
         ('Sell', 'Sell'),]
-    OrderType = models.CharField(max_length=10, choices=type, default='Buy')
+    orderType = models.CharField(max_length=10, choices=type, default='Buy')
     status = [('Open' , 'Open'),('Closed', 'Closed')]
-    OrderStatus = models.CharField(max_length=10, choices=status, default='Open')
-    datetime = models.DateTimeField(auto_now_add=True)
-    price_order = models.FloatField(default=None)
-    price_end_order = models.FloatField(default=None)
-    quantity = models.FloatField()
-    def CreateOrder(self):
+    orderStatus = models.CharField(max_length=10, choices=status, default='Open')
+    dateTime = models.DateTimeField(auto_now_add=True)
+    priceOrder = models.FloatField(default=0)
+    profitOrder = models.FloatField(default=0)
+    quantity = models.FloatField(default=0)
+    def createOrder(self):
         self.save()
 
 class listTransaction(models.Model):
     _id = ObjectIdField()
     buyer = models.ForeignKey(Profile, on_delete=models.DO_NOTHING, related_name='buyer')
-    buyeruser = models.ForeignKey(User, on_delete=models.DO_NOTHING, related_name='buyeruser')
-    price = models.FloatField(default=None)
-    quantity = models.FloatField(default=None)
+    buyerUser = models.ForeignKey(User, on_delete=models.DO_NOTHING, related_name='buyeruser')
+    price = models.FloatField(default=0)
+    quantity = models.FloatField(default=0)
     seller = models.ForeignKey(Profile, on_delete=models.DO_NOTHING, related_name='seller')
-    selleruser = models.ForeignKey(User, on_delete=models.DO_NOTHING, related_name='selleruser')
+    sellerUser = models.ForeignKey(User, on_delete=models.DO_NOTHING, related_name='selleruser')
     def createList(self):
         self.save()
