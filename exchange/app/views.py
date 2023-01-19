@@ -231,7 +231,7 @@ def sellOrder (request):
                             #Decresed the seller Wallet BTC by the amount of the price/quantity that match with the buy order
                             seller.walletUserBTC = seller.walletUserBTC - quantity
                             #Calculation of the profit for Sell order
-                            orderCreated.profitOrder = (orderFinded.priceOrder - price) * quantity
+                            orderCreated.profitOrder = orderCreated.profitOrder + (orderFinded.priceOrder - price) * quantity
                             x = Decimal(orderFinded.quantity) - Decimal(quantity)
                             y = float(x)
                             #The buy quantity is less then the buy quantity, then I can't close the sell order and reduce the buy quantity by sell quantity
