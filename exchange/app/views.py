@@ -91,6 +91,11 @@ def buyOrder(request):
                             #Increased the BTC Wallet of the buyer and USD Wallet for the seller
                             buyer.walletUserBTC = buyer.walletUserBTC + orderFinded.quantity
                             sellCustomer.walletUserUSD = sellCustomer.walletUserUSD + (price*orderFinded.quantity)
+
+                            print(sellCustomer.walletUserUSD)
+                            print(price*orderFinded.quantity)
+                            print(sellCustomer.walletUserUSD)
+
                             sellCustomer.save()
                             #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
                             buyer.walletUserUSD = buyer.walletUserUSD - (price * orderFinded.quantity)
@@ -98,10 +103,13 @@ def buyOrder(request):
                             quantityTransaction = orderFinded.quantity
                             quantity = quantity - orderFinded.quantity
                             #Calculation of the profit for Sell order
-                            orderFinded.profitOrder = (price - orderFinded.priceOrder)*orderFinded.quantity
+                            print(price - orderFinded.priceOrder)
+                            print(quantityTransaction)
+                            orderFinded.profitOrder = orderFinded.profitOrder + ((price - orderFinded.priceOrder) * quantityTransaction)
                             #The quantity of Sell order was used in total, then put the quantity for the order to 0
                             orderFinded.quantity = 0
                             orderFinded.save()
+                            print('Buy con quantità maggiore dell ordine di vendita')
                         else:
                             #Increased the BTC Wallet of the buyer and USD Wallet for the seller
                             buyer.walletUserBTC = buyer.walletUserBTC + quantity
@@ -110,7 +118,7 @@ def buyOrder(request):
                             #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
                             buyer.walletUserUSD = buyer.walletUserUSD - (price * quantity)
                             #Calculation of the profit for Sell order
-                            orderFinded.profitOrder = (price - orderFinded.priceOrder) * orderFinded.quantity
+                            orderFinded.profitOrder = orderFinded.profitOrder + ((price - orderFinded.priceOrder) * quantity)
                             x = Decimal(orderFinded.quantity) - Decimal(quantity)
                             y = float(x)
                             #The buy quantity is less then the Sell quantity, then I can't close the Sell order and reduce the Sell quantity by Buy quantity
@@ -118,6 +126,7 @@ def buyOrder(request):
                             orderFinded.save()
                             quantityTransaction = quantity
                             quantity = 0
+                            print('Buy con quantità minore dell ordine di vendita')
                         #If sell order fined have quantity equal to 0, close the Sell order
                         if orderFinded.quantity == 0:
                             orderFinded.orderStatus = 'Closed'
@@ -139,7 +148,6 @@ def buyOrder(request):
                             'Seller Profit Order': str(orderFinded.profitOrder),
                         }
                         save_transaction = transactionList.insert_one(saveTransactionClosed)
-
                     else:
                         #If there are no order match the Buy order is in Open status for the remain quantity
                         orderCreated.orderStatus = 'Open'
@@ -179,7 +187,6 @@ def sellOrder (request):
             seller = Profile.objects.get(user=request.user)
             price = form.cleaned_data.get('price')
             quantity = form.cleaned_data.get('quantity')
-            totalPriceSell = price * quantity
             #If the seller don't have BTC in Wallet he can't buy other BTC
             if seller.walletUserBTC < quantity:
                 messages.info(request, "You BTC balance is not enough for sell order.")
@@ -202,37 +209,37 @@ def sellOrder (request):
                         buyerCustomer = Profile.objects.get(user=orderFinded.profile)
 
                         if quantity >= orderFinded.quantity:
-                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            #Increased the USD Wallet of the seller and BTC Wallet for the buyer
                             seller.walletUserUSD = seller.walletUserUSD + (orderFinded.quantity*orderFinded.priceOrder)
                             buyerCustomer.walletUserBTC = buyerCustomer.walletUserBTC + orderFinded.quantity
                             buyerCustomer.save()
-                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            #Decresed the seller Wallet BTC by the amount of the price/quantity that match with the buy order
                             seller.walletUserBTC = seller.walletUserBTC - orderFinded.quantity
-                            #The new quantity for this Buy order will be decreased by the quantity of the sell order closed
+                            #The new quantity for this sell order will be decreased by the quantity of the buy order closed
                             quantityTransaction = orderFinded.quantity
                             quantity = quantity - orderFinded.quantity
                             #Calculation of the profit for Sell order
-                            orderCreated.profitOrder = (orderFinded.priceOrder - price)*orderFinded.quantity
+                            orderCreated.profitOrder = (orderFinded.priceOrder - price) * orderFinded.quantity
                             #The quantity of Sell order was used in total, then put the quantity for the order to 0
                             orderFinded.quantity = 0
                             orderFinded.save()
                         else:
-                            #Increased the BTC Wallet of the buyer and USD Wallet for the seller
+                            #Increased the USD Wallet of the seller and BTC Wallet for the buyer
                             seller.walletUserUSD = seller.walletUserUSD + (quantity*orderFinded.priceOrder)
                             buyerCustomer.walletUserBTC = buyerCustomer.walletUserBTC + quantity
                             buyerCustomer.save()
-                            #Decresed the Buyers Wallet USD by the amount of the price/quantity that match with the Sell order
+                            #Decresed the seller Wallet BTC by the amount of the price/quantity that match with the buy order
                             seller.walletUserBTC = seller.walletUserBTC - quantity
                             #Calculation of the profit for Sell order
                             orderCreated.profitOrder = (orderFinded.priceOrder - price) * quantity
                             x = Decimal(orderFinded.quantity) - Decimal(quantity)
                             y = float(x)
-                            #The buy quantity is less then the Sell quantity, then I can't close the Sell order and reduce the Sell quantity by Buy quantity
+                            #The buy quantity is less then the buy quantity, then I can't close the sell order and reduce the buy quantity by sell quantity
                             orderFinded.quantity = y
                             orderFinded.save()
                             quantityTransaction = quantity
                             quantity = 0
-                        #If sell order fined have quantity equal to 0, close the Sell order
+                        #If buy order fined have quantity equal to 0, close the buy order
                         if orderFinded.quantity == 0:
                             orderFinded.orderStatus = 'Closed'
                             orderFinded.save()
@@ -253,11 +260,10 @@ def sellOrder (request):
                             'Seller Profit Order': str(orderCreated.profitOrder),
                         }
                         save_transaction = transactionList.insert_one(saveTransactionClosed)
-
                     else:
-                        #If there are no order match the Buy order is in Open status for the remain quantity
+                        #If there are no order match the sell order is in Open status for the remain quantity
                         orderCreated.orderStatus = 'Open'
-                        seller.walletUserUSD = seller.walletUserUSD - (price * quantity)
+                        seller.walletUserBTC = seller.walletUserBTC - quantity
                         if quantity == 0:
                             orderCreated.orderStatus = 'Closed'
                         orderFindMatch = False
@@ -265,9 +271,9 @@ def sellOrder (request):
                         orderCreated.orderStatus = 'Closed'
                         orderFindMatch = False
 
-                #Save buy profile  after all the controls
+                #Save seller profile  after all the controls
                 seller.save()
-                #Save the Buy order created
+                #Save the Sell order created
                 orderCreated.quantity = quantity
                 orderCreated.createOrder()
 
@@ -310,11 +316,11 @@ def profitProfile(request):
 
         orderPendingBuy = Order.objects.filter(profile=r.user, orderStatus='Open', orderType='Buy')
         for order in orderPendingBuy:
-            userPendingBuy = userPendingBuy + order.priceOrder
+            userPendingBuy = userPendingBuy + (order.priceOrder * order.quantity)
 
         orderPendingSell = Order.objects.filter(profile=r.user, orderStatus='Open', orderType='Sell')
         for order in orderPendingSell:
-            userPendingSell = userPendingSell + order.priceOrder
+            userPendingSell = userPendingSell + (order.priceOrder * order.quantity)
 
         profit = userAmmount + userPendingBuy + userPendingSell - r.walletUserValueBTC
         response.append(
