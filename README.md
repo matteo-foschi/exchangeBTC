@@ -12,7 +12,7 @@ Web Application Exchange based on Django and MongoDB
 
 To deploy this project:
 - Create a Virtual Environment
-- Use the folder mongoDB
+- Use the main folder
 - Clone the repo and install requirements in ecoHotel/requirements.txt
 - Install and run the MongoDB server: You could follow this guide for Windows: https://www.html.it/pag/52332/installazione-2/ or macOs guide: https://www.mongodb.com/docs/manual/tutorial/install-mongodb-on-os-x/
 - Use the folder "exchange":
