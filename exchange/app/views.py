@@ -109,7 +109,6 @@ def buyOrder(request):
                             #The quantity of Sell order was used in total, then put the quantity for the order to 0
                             orderFinded.quantity = 0
                             orderFinded.save()
-                            print('Buy con quantità maggiore dell ordine di vendita')
                         else:
                             #Increased the BTC Wallet of the buyer and USD Wallet for the seller
                             buyer.walletUserBTC = buyer.walletUserBTC + quantity
@@ -126,7 +125,6 @@ def buyOrder(request):
                             orderFinded.save()
                             quantityTransaction = quantity
                             quantity = 0
-                            print('Buy con quantità minore dell ordine di vendita')
                         #If sell order fined have quantity equal to 0, close the Sell order
                         if orderFinded.quantity == 0:
                             orderFinded.orderStatus = 'Closed'
